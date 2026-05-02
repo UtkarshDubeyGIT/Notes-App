@@ -19,12 +19,15 @@ def home():
     return render_template("home.html", user= current_user)
 
 @views.route('/delete-note', methods=['POST'])
+@login_required
 def delete_note():
     note = json.loads(request.data)
-    noteId=note['noteId']
+    noteId = note['noteId']
     note = Note.query.get(noteId)
-    if note:
-        if note.user_id == current_user.id:
-            db.session.delete(note)
-            db.session.commit()
-    return jsonify({})
+    if not note:
+        return jsonify({'error': 'Note not found'}), 404
+    if note.user_id != current_user.id:
+        return jsonify({'error': 'Unauthorized to delete this note'}), 403
+    db.session.delete(note)
+    db.session.commit()
+    return jsonify({'success': True}), 200
