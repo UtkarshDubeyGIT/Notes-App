@@ -117,18 +117,76 @@ def test_user_cannot_delete_other_users_note(client, app):
         assert user2_note is not None
         
         response = client.post('/delete-note', json={'noteId': user2_note.id})
-        assert response.status_code == 200
+        assert response.status_code == 403
+        
+        response_json = response.get_json()
+        assert 'error' in response_json
+        assert 'Unauthorized' in response_json['error']
         
         still_exists = Note.query.filter_by(data='User2 Note 1').first()
         assert still_exists is not None
 
 
-def test_user_cannot_access_note_by_id_directly(client, app):
+def test_user_cannot_delete_note_by_id_directly_via_get(client, app):
     with app.app_context():
         login_user(client, 'user1@example.com', 'password123')
         
-        user2_note = Note.query.filter_by(data='User2 Note 1').first()
-        assert user2_note is not None
+        response = client.get('/delete-note', follow_redirects=True)
+        assert response.status_code == 405
+
+
+def test_user_cannot_delete_nonexistent_note(client, app):
+    with app.app_context():
+        login_user(client, 'user1@example.com', 'password123')
         
-        response = client.get(f'/delete-note', follow_redirects=True)
-        assert 'User2 Note 1' not in response.data.decode('utf-8')
+        response = client.post('/delete-note', json={'noteId': 999999})
+        assert response.status_code == 404
+        
+        response_json = response.get_json()
+        assert 'error' in response_json
+        assert 'Note not found' in response_json['error']
+
+
+def test_new_note_belongs_to_current_user(client, app):
+    with app.app_context():
+        login_user(client, 'user1@example.com', 'password123')
+        
+        user1 = User.query.filter_by(email='user1@example.com').first()
+        initial_notes_count = Note.query.filter_by(user_id=user1.id).count()
+        
+        response = client.post('/', data={
+            'note': 'New Test Note'
+        }, follow_redirects=True)
+        assert response.status_code == 200
+        
+        new_note = Note.query.filter_by(data='New Test Note').first()
+        assert new_note is not None
+        assert new_note.user_id == user1.id
+        
+        updated_count = Note.query.filter_by(user_id=user1.id).count()
+        assert updated_count == initial_notes_count + 1
+        
+        response_text = response.data.decode('utf-8')
+        assert 'New Test Note' in response_text
+
+
+def test_other_user_cannot_see_new_note(client, app):
+    with app.app_context():
+        login_user(client, 'user1@example.com', 'password123')
+        
+        client.post('/', data={
+            'note': 'User1 Private Note'
+        }, follow_redirects=True)
+        
+        private_note = Note.query.filter_by(data='User1 Private Note').first()
+        assert private_note is not None
+        
+        client.get('/logout', follow_redirects=True)
+        
+        login_user(client, 'user2@example.com', 'password123')
+        
+        response = client.get('/')
+        assert response.status_code == 200
+        
+        response_text = response.data.decode('utf-8')
+        assert 'User1 Private Note' not in response_text
